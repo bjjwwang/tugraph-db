@@ -22,26 +22,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ---------- Linux deps ----------
       - name: Install deps (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             cmake ninja-build ccache build-essential pkg-config \
-            libssl-dev libboost-all-dev libjemalloc-dev python3-dev
+            libssl-dev \
+            libboost-all-dev \
+            libjemalloc-dev \
+            libgflags-dev \
+            libgoogle-glog-dev \
+            libunwind-dev \
+            python3-dev curl git
 
+      - name: Build & install Antlr4 C++ runtime 4.13.0 (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          git clone --depth=1 --branch 4.13.0 https://github.com/antlr/antlr4.git /tmp/antlr4
+          cmake -S /tmp/antlr4/runtime/Cpp -B /tmp/antlr4/build \
+            -DANTLR4_INSTALL=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build /tmp/antlr4/build -j
+          sudo cmake --install /tmp/antlr4/build
+          # 提示 FindAntlr4：安装到了 /usr/local
+          echo "CMAKE_PREFIX_PATH=/usr/local:${CMAKE_PREFIX_PATH}" >> $GITHUB_ENV
+
+      # ---------- macOS deps ----------
       - name: Install deps (macOS)
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install ninja ccache openssl@3 gcc@14 boost jemalloc
+          # 不装 cmake 以避免 tap 冲突；runner 已预装
+          brew install ninja ccache gcc@14 openssl@3 boost gflags glog jemalloc antlr4-cpp-runtime
           echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
           echo "OPENSSL_SSL_LIB=$(brew --prefix openssl@3)/lib/libssl.dylib" >> $GITHUB_ENV
           echo "OPENSSL_CRYPTO_LIB=$(brew --prefix openssl@3)/lib/libcrypto.dylib" >> $GITHUB_ENV
           echo "OPENSSL_INC=$(brew --prefix openssl@3)/include" >> $GITHUB_ENV
-          echo "JEMALLOC_INC=$(brew --prefix jemalloc)/include" >> $GITHUB_ENV
-          echo "JEMALLOC_LIB=$(brew --prefix jemalloc)/lib/libjemalloc.dylib" >> $GITHUB_ENV
-          echo "BREW_BOOST_PREFIX=$(brew --prefix boost)" >> $GITHUB_ENV
+          echo "BREW_PREFIX=$(brew --prefix)" >> $GITHUB_ENV
           echo "CC=$(brew --prefix gcc@14)/bin/gcc-14" >> $GITHUB_ENV
           echo "CXX=$(brew --prefix gcc@14)/bin/g++-14" >> $GITHUB_ENV
           echo "$(brew --prefix gcc@14)/bin" >> $GITHUB_PATH
@@ -56,6 +74,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-
 
+      # ---------- Configure ----------
       - name: Configure (Ubuntu)
         if: runner.os == 'Linux'
         run: |
@@ -68,7 +87,6 @@ jobs:
             -DOPENSSL_ROOT_DIR=/usr \
             -DOpenSSL_ssl_LIBRARY=/usr/lib/x86_64-linux-gnu/libssl.so \
             -DOpenSSL_crypto_LIBRARY=/usr/lib/x86_64-linux-gnu/libcrypto.so \
-            -DBoost_USE_STATIC_LIBS=OFF \
             -DBoost_NO_BOOST_CMAKE=ON \
             -DJemalloc_INCLUDE_DIR=/usr/include \
             -DJemalloc_LIBRARY=/usr/lib/x86_64-linux-gnu/libjemalloc.so
@@ -80,9 +98,7 @@ jobs:
           OPENSSL_SSL_LIB: ${{ env.OPENSSL_SSL_LIB }}
           OPENSSL_CRYPTO_LIB: ${{ env.OPENSSL_CRYPTO_LIB }}
           OPENSSL_INC: ${{ env.OPENSSL_INC }}
-          JEMALLOC_INC: ${{ env.JEMALLOC_INC }}
-          JEMALLOC_LIB: ${{ env.JEMALLOC_LIB }}
-          BREW_BOOST_PREFIX: ${{ env.BREW_BOOST_PREFIX }}
+          BREW_PREFIX: ${{ env.BREW_PREFIX }}
           CC: ${{ env.CC }}
           CXX: ${{ env.CXX }}
         run: |
@@ -100,18 +116,17 @@ jobs:
             -DOpenSSL_ssl_INCLUDE_DIR="${OPENSSL_INC}" \
             -DOpenSSL_crypto_INCLUDE_DIR="${OPENSSL_INC}" \
             -DBoost_NO_BOOST_CMAKE=ON \
-            -DBOOST_ROOT="${BREW_BOOST_PREFIX}" \
-            -DBoost_ROOT="${BREW_BOOST_PREFIX}" \
-            -DBOOST_INCLUDEDIR="${BREW_BOOST_PREFIX}/include" \
-            -DBOOST_LIBRARYDIR="${BREW_BOOST_PREFIX}/lib" \
-            -DJemalloc_INCLUDE_DIR="${JEMALLOC_INC}" \
-            -DJemalloc_LIBRARY="${JEMALLOC_LIB}"
+            -DBOOST_ROOT="${BREW_PREFIX}/opt/boost" \
+            -DBOOST_INCLUDEDIR="${BREW_PREFIX}/opt/boost/include" \
+            -DBOOST_LIBRARYDIR="${BREW_PREFIX}/opt/boost/lib" \
+            -DJemalloc_INCLUDE_DIR="${BREW_PREFIX}/opt/jemalloc/include" \
+            -DJemalloc_LIBRARY="${BREW_PREFIX}/opt/jemalloc/lib/libjemalloc.dylib" \
+            -DCMAKE_PREFIX_PATH="${BREW_PREFIX}/opt/antlr4-cpp-runtime;${CMAKE_PREFIX_PATH}"
 
       - name: Build
         run: cmake --build build --config Release -j
 
       - name: Pack artifact
-        shell: bash
         run: |
           mkdir -p out
           tar -czf out/build-${{ matrix.os }}.tar.gz -C build .
