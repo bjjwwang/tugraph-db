@@ -32,10 +32,15 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install cmake ninja ccache openssl@3 gcc@14
+          # cmake is preinstalled on GitHub runners; don't reinstall to avoid tap conflicts
+          brew install ninja ccache openssl@3 gcc@14
           echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> $GITHUB_ENV
+          echo "OPENSSL_SSL_LIB=$(brew --prefix openssl@3)/lib/libssl.dylib" >> $GITHUB_ENV
+          echo "OPENSSL_CRYPTO_LIB=$(brew --prefix openssl@3)/lib/libcrypto.dylib" >> $GITHUB_ENV
+          echo "OPENSSL_INC=$(brew --prefix openssl@3)/include" >> $GITHUB_ENV
           echo "CC=$(brew --prefix gcc@14)/bin/gcc-14" >> $GITHUB_ENV
           echo "CXX=$(brew --prefix gcc@14)/bin/g++-14" >> $GITHUB_ENV
+          echo "$(brew --prefix gcc@14)/bin" >> $GITHUB_PATH
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -55,22 +60,36 @@ jobs:
             -DCMAKE_CXX_STANDARD=17 -DCMAKE_CXX_STANDARD_REQUIRED=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DOPENSSL_USE_STATIC_LIBS=OFF
+            -DOPENSSL_USE_STATIC_LIBS=OFF \
+            -DOPENSSL_ROOT_DIR=/usr \
+            -DOpenSSL_ssl_LIBRARY=/usr/lib/x86_64-linux-gnu/libssl.so \
+            -DOpenSSL_crypto_LIBRARY=/usr/lib/x86_64-linux-gnu/libcrypto.so \
+            -DOpenSSL_ssl_INCLUDE_DIR=/usr/include \
+            -DOpenSSL_crypto_INCLUDE_DIR=/usr/include
 
-      - name: Configure (macOS)
+      - name: Configure (macOS with GCC)
         if: runner.os == 'macOS'
         env:
           OPENSSL_ROOT_DIR: ${{ env.OPENSSL_ROOT_DIR }}
+          OPENSSL_SSL_LIB: ${{ env.OPENSSL_SSL_LIB }}
+          OPENSSL_CRYPTO_LIB: ${{ env.OPENSSL_CRYPTO_LIB }}
+          OPENSSL_INC: ${{ env.OPENSSL_INC }}
           CC: ${{ env.CC }}
           CXX: ${{ env.CXX }}
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="${CC}" \
+            -DCMAKE_CXX_COMPILER="${CXX}" \
             -DCMAKE_CXX_STANDARD=17 -DCMAKE_CXX_STANDARD_REQUIRED=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DOPENSSL_USE_STATIC_LIBS=OFF \
             -DOPENSSL_ROOT_DIR="${OPENSSL_ROOT_DIR}" \
-            -DOPENSSL_USE_STATIC_LIBS=OFF
+            -DOpenSSL_ssl_LIBRARY="${OPENSSL_SSL_LIB}" \
+            -DOpenSSL_crypto_LIBRARY="${OPENSSL_CRYPTO_LIB}" \
+            -DOpenSSL_ssl_INCLUDE_DIR="${OPENSSL_INC}" \
+            -DOpenSSL_crypto_INCLUDE_DIR="${OPENSSL_INC}"
 
       - name: Build
         run: cmake --build build --config Release -j
